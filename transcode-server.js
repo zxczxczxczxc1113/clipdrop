@@ -62,7 +62,9 @@ function runFfmpeg(input, output) {
   return new Promise((resolve, reject) => {
     const args = [
       '-y', '-i', input,
+      '-threads', '1',
       '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
+      '-vf', 'scale=-2:720',
       '-c:a', 'aac', '-b:a', '128k',
       '-movflags', '+faststart', '-pix_fmt', 'yuv420p',
       output,
@@ -121,4 +123,4 @@ app.post('/transcode', auth, (req, res) => {
     .finally(() => running.delete(key));
 });
 
-app.listen(PORT, () => console.log(`Transcoder listening on ${PORT}, ffmpeg: ${ffmpegPath}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`Transcoder listening on ${PORT}, ffmpeg: ${ffmpegPath}`));

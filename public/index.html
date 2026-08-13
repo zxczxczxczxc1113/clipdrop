@@ -139,7 +139,8 @@ async function uploadFile(file) {
     });
     if (!tr.ok) {
       const err = await tr.json().catch(() => ({}));
-      throw new Error(err.error || 'Server conversion failed');
+      const msg = (err.error || 'Server conversion failed').trim();
+      throw new Error(msg === 'Not Found' ? 'Transcoder offline — retry in a minute' : msg);
     }
 
     await waitReady(key, statusEl);
