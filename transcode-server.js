@@ -1,6 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const { spawn } = require('child_process');
+const fsSync = require('fs');
+const { pipeline } = require('stream/promises');
 const fs = require('fs/promises');
 const path = require('path');
 const os = require('os');
@@ -10,7 +12,6 @@ const {
   PutObjectCommand,
 } = require('@aws-sdk/client-s3');
 
-// Use system ffmpeg in Docker; ffmpeg-static locally on Windows dev
 let ffmpegPath = 'ffmpeg';
 try {
   ffmpegPath = require('ffmpeg-static') || 'ffmpeg';
@@ -29,7 +30,7 @@ const {
 } = process.env;
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 
 const s3 = new S3Client({
   region: 'auto',
@@ -53,9 +54,7 @@ function auth(req, res, next) {
 }
 
 async function streamToFile(body, dest) {
-  const chunks = [];
-  for await (const chunk of body) chunks.push(chunk);
-  await fs.writeFile(dest, Buffer.concat(chunks));
+  await pipeline(body, fsSync.createWriteStream(dest));
 }
 
 function runFfmpeg(input, output) {
@@ -63,9 +62,9 @@ function runFfmpeg(input, output) {
     const args = [
       '-y', '-i', input,
       '-threads', '1',
-      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
-      '-vf', 'scale=-2:720',
-      '-c:a', 'aac', '-b:a', '128k',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28',
+      '-vf', 'scale=-2:480',
+      '-c:a', 'aac', '-b:a', '96k',
       '-movflags', '+faststart', '-pix_fmt', 'yuv420p',
       output,
     ];
@@ -82,20 +81,25 @@ async function transcodeKey(key) {
   if (!webKey) throw new Error('Invalid key');
 
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'clipdrop-'));
-  const inputPath = path.join(tmpDir, 'input');
+  const inputPath = path.join(tmpDir, 'input.mp4');
   const outputPath = path.join(tmpDir, 'output.mp4');
 
   try {
+    console.log('Transcode start', key);
     const obj = await s3.send(new GetObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key }));
     await streamToFile(obj.Body, inputPath);
+    console.log('Downloaded', key, (await fs.stat(inputPath)).size, 'bytes');
     await runFfmpeg(inputPath, outputPath);
-    const outBuf = await fs.readFile(outputPath);
+    const outStat = await fs.stat(outputPath);
+    console.log('Encoded', webKey, outStat.size, 'bytes');
     await s3.send(new PutObjectCommand({
       Bucket: R2_BUCKET_NAME,
       Key: webKey,
-      Body: outBuf,
+      Body: fsSync.createReadStream(outputPath),
       ContentType: 'video/mp4',
+      ContentLength: outStat.size,
     }));
+    console.log('Done', webKey);
     return { webKey, publicUrl: `${R2_PUBLIC_URL}/${webKey}` };
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true });
@@ -104,7 +108,7 @@ async function transcodeKey(key) {
 
 const running = new Set();
 
-app.get('/health', (_req, res) => res.json({ ok: true }));
+app.get('/health', (_req, res) => res.json({ ok: true, ffmpeg: ffmpegPath }));
 
 app.post('/transcode', auth, (req, res) => {
   const { key } = req.body;
@@ -118,7 +122,6 @@ app.post('/transcode', auth, (req, res) => {
   res.json({ status: 'processing', webKey });
 
   transcodeKey(key)
-    .then((result) => console.log('Done', result.webKey))
     .catch((err) => console.error('Transcode failed', key, err.message))
     .finally(() => running.delete(key));
 });
