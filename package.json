@@ -1,0 +1,26 @@
+{
+  "name": "clipdrop",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "start": "node server.js",
+    "transcode": "node transcode-server.js"
+  },
+    "devDependencies": {
+    "esbuild": "^0.25.0",
+    "wrangler": "^4.14.0"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.750.0",
+    "@aws-sdk/s3-request-presigner": "^3.750.0",
+    "@ffmpeg/core": "^0.12.6",
+    "@ffmpeg/ffmpeg": "^0.12.10",
+    "@ffmpeg/util": "^0.12.2",
+    "aws4fetch": "^1.0.20",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "ffmpeg-static": "^5.2.0"
+  }
+}

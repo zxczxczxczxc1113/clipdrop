@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: clipdrop-transcode
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: CLOUDFLARE_ACCOUNT_ID
+        value: a41b556e5cb967da7d49d43379f9662f
+      - key: R2_BUCKET_NAME
+        value: clips
+      - key: R2_PUBLIC_URL
+        value: https://pub-ae2fb61b74a2478ab22675a177d5c3e5.r2.dev
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: TRANSCODE_SECRET
+        generateValue: true
