@@ -1,9 +1,11 @@
 services:
   - type: web
     name: clipdrop-transcode
-    runtime: docker
+    runtime: node
     plan: free
     healthCheckPath: /health
+    buildCommand: npm install --omit=dev
+    startCommand: node transcode-server.js
     envVars:
       - key: CLOUDFLARE_ACCOUNT_ID
         value: a41b556e5cb967da7d49d43379f9662f
