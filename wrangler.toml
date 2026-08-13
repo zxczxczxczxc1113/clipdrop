@@ -7,11 +7,8 @@ account_id = "a41b556e5cb967da7d49d43379f9662f"
 directory = "./public"
 binding = "ASSETS"
 
-[[r2_buckets]]
-binding = "BUCKET"
-bucket_name = "clips"
+[stream]
+binding = "STREAM"
 
 [vars]
-R2_PUBLIC_URL = "https://pub-ae2fb61b74a2478ab22675a177d5c3e5.r2.dev"
-BUCKET_NAME = "clips"
 CLOUDFLARE_ACCOUNT_ID = "a41b556e5cb967da7d49d43379f9662f"

@@ -39,7 +39,7 @@
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
   .clip-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; text-decoration: none; color: inherit; }
   .clip-card:hover { border-color: var(--accent); }
-  .clip-card video { width: 100%; aspect-ratio: 16/9; background: #000; display: block; pointer-events: none; }
+  .clip-card .thumb { width: 100%; aspect-ratio: 16/9; background: #000; display: block; object-fit: cover; }
   .clip-card .info { padding: 10px 12px; }
   .clip-card .fname { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .clip-card .fmeta { font-size: 12px; color: var(--dim); margin-top: 4px; }
@@ -54,7 +54,7 @@
 <main>
   <div id="dropzone">
     <strong>Drop a video here</strong>
-    <small>uploads fast &middot; server converts for browser playback</small>
+    <small>any format &middot; full quality &middot; Cloudflare Stream</small>
   </div>
   <input type="file" id="fileInput" accept="video/*" multiple />
   <div id="queue"></div>
@@ -64,6 +64,7 @@
     <p class="empty" id="emptyMsg" hidden>No clips yet.</p>
   </section>
 </main>
+<script src="https://unpkg.com/tus-js-client@4.2.3/dist/tus.min.js"></script>
 <script>
 const dropzone = document.getElementById('dropzone');
 const fileInput = document.getElementById('fileInput');
@@ -85,16 +86,52 @@ function formatBytes(bytes) {
   return `${(bytes / 1024 ** i).toFixed(1)} ${['B','KB','MB','GB'][i]}`;
 }
 
-async function waitReady(key, statusEl) {
+function formatDuration(sec) {
+  if (!sec) return '';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return m ? `${m}m ${s}s` : `${s}s`;
+}
+
+async function waitReady(id, statusEl) {
   for (let i = 0; i < 120; i++) {
-    const res = await fetch('/api/clips/' + encodeURIComponent(key));
+    const res = await fetch('/api/clips/' + encodeURIComponent(id));
     if (!res.ok) break;
     const clip = await res.json();
     if (clip.playbackReady) return clip;
-    statusEl.textContent = 'converting on server…';
+    const pct = clip.pctComplete ? ` ${Math.round(clip.pctComplete)}%` : '';
+    statusEl.textContent = `processing${pct}…`;
     await new Promise(r => setTimeout(r, 3000));
   }
-  throw new Error('Conversion timed out — try again in a minute');
+  throw new Error('Processing timed out — refresh in a minute');
+}
+
+function uploadToStream(file, uploadUrl, tus, onProgress) {
+  if (tus) {
+    return new Promise((resolve, reject) => {
+      const upload = new tus.Upload(file, {
+        uploadUrl,
+        chunkSize: 50 * 1024 * 1024,
+        retryDelays: [0, 3000, 5000, 10000],
+        onError: reject,
+        onProgress: (sent, total) => onProgress(Math.round((sent / total) * 100)),
+        onSuccess: resolve,
+      });
+      upload.start();
+    });
+  }
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', uploadUrl);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error('Upload failed'));
+    xhr.onerror = () => reject(new Error('Network error'));
+    const form = new FormData();
+    form.append('file', file);
+    xhr.send(form);
+  });
 }
 
 async function uploadFile(file) {
@@ -109,41 +146,25 @@ async function uploadFile(file) {
     const res = await fetch('/api/upload-url', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filename: file.name, contentType: file.type || 'video/mp4' }),
+      body: JSON.stringify({
+        filename: file.name,
+        contentType: file.type || 'video/mp4',
+        fileSize: file.size,
+      }),
     });
-    if (!res.ok) throw new Error('Could not get upload URL');
-    const { uploadUrl, watchUrl, key } = await res.json();
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Could not get upload URL');
+    }
+    const { uploadUrl, id, watchUrl, tus } = await res.json();
 
     statusEl.textContent = 'uploading…';
-    await new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('PUT', uploadUrl);
-      xhr.setRequestHeader('Content-Type', file.type || 'video/mp4');
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) {
-          const pct = Math.round((e.loaded / e.total) * 100);
-          barFill.style.width = pct + '%';
-          statusEl.textContent = `uploading… ${pct}%`;
-        }
-      };
-      xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error('Upload failed'));
-      xhr.onerror = () => reject(new Error('Network error'));
-      xhr.send(file);
+    await uploadToStream(file, uploadUrl, tus, (pct) => {
+      barFill.style.width = pct + '%';
+      statusEl.textContent = `uploading… ${pct}%`;
     });
 
-    statusEl.textContent = 'starting conversion…';
-    const tr = await fetch('/api/transcode', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key }),
-    });
-    if (!tr.ok) {
-      const err = await tr.json().catch(() => ({}));
-      const msg = (err.error || 'Server conversion failed').trim();
-      throw new Error(msg === 'Not Found' ? 'Transcoder offline — retry in a minute' : msg);
-    }
-
-    await waitReady(key, statusEl);
+    await waitReady(id, statusEl);
     barFill.style.width = '100%';
     statusEl.textContent = 'done';
     statusEl.classList.add('done');
@@ -167,8 +188,10 @@ async function loadClips() {
     const a = document.createElement('a');
     a.className = 'clip-card';
     a.href = clip.watchUrl;
-    const thumb = clip.playbackReady ? clip.playbackUrl : clip.publicUrl;
-    a.innerHTML = `<video src="${thumb}#t=0.5" preload="metadata" muted></video><div class="info"><div class="fname">${clip.name}</div><div class="fmeta">${formatBytes(clip.size)} · ${new Date(clip.lastModified).toLocaleDateString()}${clip.processing ? ' · converting…' : ''}</div></div>`;
+    const thumb = clip.thumbnail
+      ? `<img class="thumb" src="${clip.thumbnail}" alt="" loading="lazy" />`
+      : `<div class="thumb"></div>`;
+    a.innerHTML = `${thumb}<div class="info"><div class="fname">${clip.name}</div><div class="fmeta">${formatBytes(clip.size)}${clip.duration ? ' · ' + formatDuration(clip.duration) : ''}${clip.processing ? ' · processing…' : ''}</div></div>`;
     grid.appendChild(a);
   }
 }
